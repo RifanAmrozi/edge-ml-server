@@ -1,3 +1,11 @@
+# raw additional format
+*.mp4
+*.avi
+*.jpg
+*.png
+*.jpeg
+*.gif
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

@@ -5,7 +5,7 @@ import datetime
 
 # TODO: replace with actual RTSP URL of the camera
 # RTSP_URL = "rtsp://<camera_ip>/stream"
-RTSP_URL = "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov"  # example public stream
+RTSP_URL = "rtsp://170.93.143.139/rtplive/470011e600ef003a004ee33696235daa"  # example public stream
 API_URL = "http://localhost:8080/api/v1/save"  # later replace with Go server endpoint
 
 cap = cv2.VideoCapture(RTSP_URL)
