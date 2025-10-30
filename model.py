@@ -106,29 +106,23 @@ class PocketZone:
         
         return depth
 
-def configure_rtsp_environment():
-    """
-    Set environment variables untuk optimasi RTSP
-    Panggil fungsi ini SEBELUM membuat VideoCapture
-    """
+# def configure_rtsp_environment():
+#     """
+#     Set environment variables untuk optimasi RTSP
+#     Panggil fungsi ini SEBELUM membuat VideoCapture
+#     """
     
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = ";".join([
-        "rtsp_transport;udp",          
-        "fflags;nobuffer",              
-        "flags;low_delay",               
-        "max_delay;0",                  
-        "reorder_queue_size;0",         
-        "buffer_size;1024000",          
-        "analyzeduration;1000000",      
-        "probesize;1000000",            
-        "sync;ext"                    
-    ])
-
-    os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "5"
+#     # ✅ FORMAT YANG BENAR untuk OpenCV FFMPEG options
+#     # Syntax: "option_name1;option_value1;option_name2;option_value2"
+#     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp;fflags;nobuffer;flags;low_delay"
     
-    os.environ["OMP_NUM_THREADS"] = "4"
+#     # Atau lebih sederhana, hanya set transport:
+#     # os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp"
     
-    print("✅ RTSP environment configured for low latency")
+#     os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "5"
+#     os.environ["OMP_NUM_THREADS"] = "4"
+    
+#     print("✅ RTSP environment configured for low latency") 
 
 class ThreadedRTSPCapture:
     """
@@ -152,12 +146,14 @@ class ThreadedRTSPCapture:
         
     def start(self):
         """Start capture thread"""
-        configure_rtsp_environment()
-        
         print(f"🎬 Starting threaded RTSP capture: {self.name}")
         
+
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+
+        if self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
         if not self.cap.isOpened():
             raise ConnectionError(f"Cannot open RTSP: {self.rtsp_url}")
@@ -168,7 +164,7 @@ class ThreadedRTSPCapture:
         
         print(f"✅ Threaded capture started: {self.name}")
         return self
-    
+        
     def _update(self):
         """Background thread untuk grab frames"""
         consecutive_failures = 0
@@ -278,6 +274,7 @@ class ShopliftingPoseDetectorWithGrab:
         
         self.frame_count = 0
         self.debug_mode = debug_mode
+        
         
         self.KEYPOINTS = {
             'nose': 0, 'left_eye': 1, 'right_eye': 2, 'left_ear': 3, 'right_ear': 4,
@@ -404,7 +401,7 @@ class ShopliftingPoseDetectorWithGrab:
         
         self.alert_log = []
         self.session_start = datetime.now()
-        self.frame_buffer = deque(maxlen=450)
+        self.frame_buffer = deque(maxlen=150)
         self.alert_clips_saved = []
         self.fps = 30
         
