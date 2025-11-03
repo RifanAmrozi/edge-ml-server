@@ -398,6 +398,14 @@ class ShopliftingPoseDetectorWithGrab:
             'immediate_suspicious_depth': 0.25,  
             'immediate_suspicious_frames': 1,    
         }
+
+        self.NATURAL_POSITION_THRESHOLDS = {
+            'max_horizontal_distance_from_hip': 70,   
+            'min_elbow_angle_straight': 160,            
+            'max_wrist_to_hip_distance_relax': 80,    
+            'max_horizontal_offset_relax': 50,         
+            'vertical_ratio_threshold': 0.25,            
+        }
         
         self.alert_log = []
         self.session_start = datetime.now()
@@ -611,6 +619,39 @@ class ShopliftingPoseDetectorWithGrab:
         
         if not grabbed_hand:
             return False, [], 0.0, []
+
+        shoulder_key = f'{grabbed_hand}_shoulder'
+        elbow_key = f'{grabbed_hand}_elbow'
+        wrist_key = f'{grabbed_hand}_wrist'
+        hip_key = f'{grabbed_hand}_hip'
+        
+        shoulder = self.get_keypoint(keypoints, shoulder_key)
+        elbow = self.get_keypoint(keypoints, elbow_key)
+        wrist = self.get_keypoint(keypoints, wrist_key)
+        hip = self.get_keypoint(keypoints, hip_key)
+        
+        if all([shoulder, elbow, wrist, hip]):
+            # Check natural position
+            if wrist[1] > hip[1]: 
+                horizontal_dist = abs(wrist[0] - hip[0])
+                
+                if horizontal_dist < 70:  
+                    elbow_angle = self.calculate_angle(shoulder, elbow, wrist)
+                    wrist_to_hip = self.distance(wrist, hip)
+                    
+                    is_straight = elbow_angle and elbow_angle >= 160
+                    is_relax = wrist_to_hip and wrist_to_hip < 80 and horizontal_dist < 50
+                    
+                    if is_straight or is_relax:
+                        # RESET zone counters
+                        for zone_name in track['wrist_in_zone_frames'].keys():
+                            if track['wrist_in_zone_frames'][zone_name] > 0:
+                                track['wrist_in_zone_frames'][zone_name] = max(0, track['wrist_in_zone_frames'][zone_name] - 2)
+                        
+                        if self.debug_mode:
+                            print(f"  ✅ Natural position - SKIP zone detection")
+                        
+                        return False, [], 0.0, []
         
         if not track['pocket_zones']:
             self.initialize_pocket_zones(track_id, keypoints)
@@ -681,7 +722,6 @@ class ShopliftingPoseDetectorWithGrab:
         # Cek 1: Wrist harus JAUH dari posisi relax 
         horizontal_dist_from_hip = abs(wrist[0] - hip[0])
         
-        # Jika tangan terlalu dekat dengan hip horizontal = posisi natural/relax
         if horizontal_dist_from_hip < 50:  
             return False, 0.0
         
@@ -699,11 +739,10 @@ class ShopliftingPoseDetectorWithGrab:
         wrist_to_shoulder_horizontal = abs(wrist[0] - shoulder[0])
         wrist_to_shoulder_vertical = abs(wrist[1] - shoulder[1])
         
-        # Ratio harus menunjukkan ada komponen horizontal yang signifikan
         if wrist_to_shoulder_horizontal < wrist_to_shoulder_vertical * 0.3:
             return False, 0.0
         
-        # Cek 5: Wrist tidak boleh terlalu dekat dengan knee (harus ada jarak)
+        # Cek 5: Wrist tidak boleh terlalu dekat dengan knee 
         wrist_to_knee = self.distance(wrist, knee)
         if wrist_to_knee and wrist_to_knee < 80: 
             return False, 0.0
@@ -818,7 +857,7 @@ class ShopliftingPoseDetectorWithGrab:
                 hip_y = left_hip[1]
                 knee_y = left_knee[1]
                 
-                # KONDISI UTAMA: Tangan di bawah pinggul dengan posisi yang jelas
+                # Tangan di bawah pinggul dengan posisi yang jelas
                 if wrist_y > hip_y + 50:  
                     hip_to_knee_dist = abs(knee_y - hip_y)
                     wrist_below_hip = wrist_y - hip_y
@@ -826,7 +865,6 @@ class ShopliftingPoseDetectorWithGrab:
                     if hip_to_knee_dist > 0:
                         position_ratio = wrist_below_hip / hip_to_knee_dist
                         
-                        # Range lebih ketat
                         if 0.15 <= position_ratio <= 1.8:  
                             horizontal_dist = abs(left_wrist[0] - left_hip[0])
                             
@@ -860,7 +898,7 @@ class ShopliftingPoseDetectorWithGrab:
                 if elbow_angle and elbow_angle > self.GRAB_THRESHOLDS['elbow_angle_extended']:
                     height_diff = right_wrist[1] - right_shoulder[1]
                     
-                    # Cek apakah benar reaching ke rak
+
                     is_valid_reach, conf_modifier = self.validate_reaching_context(
                         keypoints, right_wrist, right_shoulder, right_hip, 'right'
                     )
@@ -1077,6 +1115,41 @@ class ShopliftingPoseDetectorWithGrab:
         5. Waist back - threshold dilonggarkan
         """
         suspicious_poses = []
+
+        if grabbed_hand:
+            shoulder_key = f'{grabbed_hand}_shoulder'
+            elbow_key = f'{grabbed_hand}_elbow'
+            wrist_key = f'{grabbed_hand}_wrist'
+            hip_key = f'{grabbed_hand}_hip'
+            
+            shoulder = self.get_keypoint(keypoints, shoulder_key)
+            elbow = self.get_keypoint(keypoints, elbow_key)
+            wrist = self.get_keypoint(keypoints, wrist_key)
+            hip = self.get_keypoint(keypoints, hip_key)
+            
+            # CEK POSISI NATURAL
+            if all([shoulder, elbow, wrist, hip]):
+                # 1. Wrist di bawah hip
+                if wrist[1] > hip[1]:
+                    # 2. Horizontal distance minimal
+                    horizontal_dist = abs(wrist[0] - hip[0])
+                    
+                    if horizontal_dist < 70:  
+                        # 3. Elbow angle straight ATAU wrist dekat hip
+                        elbow_angle = self.calculate_angle(shoulder, elbow, wrist)
+                        wrist_to_hip = self.distance(wrist, hip)
+                        
+                        is_straight_arm = elbow_angle and elbow_angle >= 160
+                        is_relax_position = wrist_to_hip and wrist_to_hip < 80 and horizontal_dist < 50
+                        
+                        if is_straight_arm or is_relax_position:
+                            if self.debug_mode:
+                                print(f"  ✅ Hand {grabbed_hand} in NATURAL position - NO suspicious detection")
+                                print(f"     - elbow_angle: {elbow_angle:.0f}° (straight: {is_straight_arm})")
+                                print(f"     - wrist_to_hip: {wrist_to_hip:.0f}px (relax: {is_relax_position})")
+                                print(f"     - horizontal_dist: {horizontal_dist:.0f}px")
+                            
+                            return []
         
         nose = self.get_keypoint(keypoints, 'nose')
         left_shoulder = self.get_keypoint(keypoints, 'left_shoulder')
@@ -1125,10 +1198,8 @@ class ShopliftingPoseDetectorWithGrab:
                 return True
             
             return False
-    
-        # ========================================================================
+
         # 1. BENDING DOWN 
-        # ========================================================================
         if all([nose, left_shoulder, right_shoulder, left_hip, right_hip]):
             shoulder_y = (left_shoulder[1] + right_shoulder[1]) / 2
             hip_y = (left_hip[1] + right_hip[1]) / 2
@@ -1145,9 +1216,7 @@ class ShopliftingPoseDetectorWithGrab:
                     f"Membungkuk setelah ambil barang"
                 ))
         
-        # ========================================================================
         # 2. SQUATTING/CROUCHING 
-        # ========================================================================
         if all([left_hip, right_hip, left_knee, right_knee, left_ankle, right_ankle]):
             left_angle = self.calculate_angle(left_hip, left_knee, left_ankle)
             right_angle = self.calculate_angle(right_hip, right_knee, right_ankle)
@@ -1172,9 +1241,7 @@ class ShopliftingPoseDetectorWithGrab:
                         f"Berjongkok dengan barang"
                     ))
         
-        # ========================================================================
         # 3. HIDING UNDER CLOTHING 
-        # ========================================================================
         if all([left_wrist, right_wrist, left_shoulder, right_shoulder, 
                 left_hip, right_hip, left_elbow, right_elbow]):
             
@@ -1227,9 +1294,7 @@ class ShopliftingPoseDetectorWithGrab:
                                 f"⚠️ Tangan {active_side.upper()} masuk ke baju"
                             ))
         
-        # ========================================================================
         # 4. PUTTING IN PANTS POCKET
-        # ========================================================================
         if grabbed_hand == 'left' or grabbed_hand is None:
             if all([left_shoulder, left_elbow, left_wrist, left_hip, left_knee]):
                 is_straight = is_hand_straight_down(left_shoulder, left_elbow, left_wrist, left_hip)
@@ -1276,9 +1341,7 @@ class ShopliftingPoseDetectorWithGrab:
                                         "🚨 Memasukkan ke kantong celana (KANAN)"
                                     ))
         
-        # ========================================================================
         # 5. CONCEALING AT WAIST 
-        # ========================================================================
         if grabbed_hand == 'left' or grabbed_hand is None:
             if all([left_wrist, left_hip, left_shoulder, left_elbow]):
                 wrist_to_hip = self.distance(left_wrist, left_hip)
@@ -1364,9 +1427,7 @@ class ShopliftingPoseDetectorWithGrab:
                                     "Tangan ke belakang pinggang (KANAN)"
                                 ))
         
-        # ========================================================================
         # 7. HEAD POSES 
-        # ========================================================================
         if grabbed_hand:
             wrist_key = f'{grabbed_hand}_wrist'
             elbow_key = f'{grabbed_hand}_elbow'
@@ -1427,9 +1488,7 @@ class ShopliftingPoseDetectorWithGrab:
                         description
                     ))
         
-        # ========================================================================
         # DEBUG OUTPUT
-        # ========================================================================
         if self.debug_mode and grabbed_hand:
             wrist_key = f'{grabbed_hand}_wrist'
             shoulder_key = f'{grabbed_hand}_shoulder'
@@ -1558,11 +1617,156 @@ class ShopliftingPoseDetectorWithGrab:
                 
                 return False, [], []  
             
-            # STEP 3: Jika TIDAK rotate, lanjutkan deteksi normal
-            zone_penetration, zone_details, zone_conf, zone_poses = self.detect_zone_penetration(track_id, keypoints)
-            
+            # ✅ STEP 3: CEK POSISI NATURAL (TANGAN LURUS KEBAWAH)
             grabbed_hand = track['grabbed_hand']
-            suspicious_poses = self.detect_suspicious_poses(keypoints, grabbed_hand=grabbed_hand, is_rotating=False)
+            shoulder_key = f'{grabbed_hand}_shoulder'
+            elbow_key = f'{grabbed_hand}_elbow'
+            wrist_key = f'{grabbed_hand}_wrist'
+            hip_key = f'{grabbed_hand}_hip'
+            knee_key = f'{grabbed_hand}_knee'
+            
+            shoulder = self.get_keypoint(keypoints, shoulder_key)
+            elbow = self.get_keypoint(keypoints, elbow_key)
+            wrist = self.get_keypoint(keypoints, wrist_key)
+            hip = self.get_keypoint(keypoints, hip_key)
+            knee = self.get_keypoint(keypoints, knee_key)
+            
+            # CEK: Apakah tangan dalam posisi NATURAL (straight down)?
+            is_natural_position = False
+            natural_check_details = {}
+            
+            if all([shoulder, elbow, wrist, hip]):
+                # HELPER FUNCTION: Cek Natural Position
+                def is_hand_in_natural_position(shoulder, elbow, wrist, hip, knee=None):
+                    """
+                    Cek apakah tangan dalam posisi natural (lurus kebawah di samping badan)
+                    Returns: (is_natural, details_dict)
+                    """
+                    details = {
+                        'wrist_below_hip': False,
+                        'horizontal_distance': 0,
+                        'elbow_angle': 0,
+                        'wrist_to_hip_distance': 0,
+                        'vertical_alignment': 0,
+                        'is_straight_arm': False,
+                        'is_relax_position': False,
+                        'is_natural': False
+                    }
+                    
+                    # CHECK 1: Wrist harus di BAWAH hip (Y-coordinate lebih besar)
+                    if wrist[1] <= hip[1]:
+                        details['wrist_below_hip'] = False
+                        return False, details
+                    
+                    details['wrist_below_hip'] = True
+                    
+                    # CHECK 2: Horizontal distance dari hip harus MINIMAL (di samping badan)
+                    horizontal_dist = abs(wrist[0] - hip[0])
+                    details['horizontal_distance'] = horizontal_dist
+                    
+                    # Threshold: 70px (adjustable)
+                    if horizontal_dist > 70:  
+                        # Terlalu jauh dari badan = bukan posisi natural
+                        return False, details
+                    
+                    # CHECK 3: Elbow angle harus STRAIGHT (>160°) - KRITERIA UTAMA
+                    elbow_angle = self.calculate_angle(shoulder, elbow, wrist)
+                    details['elbow_angle'] = elbow_angle if elbow_angle else 0
+                    
+                    if elbow_angle and elbow_angle >= 160:
+                        details['is_straight_arm'] = True
+                        details['is_natural'] = True
+                        return True, details
+                    
+                    # CHECK 4: ALTERNATIF - Wrist sangat dekat dengan hip (posisi relax)
+                    wrist_to_hip = self.distance(wrist, hip)
+                    details['wrist_to_hip_distance'] = wrist_to_hip if wrist_to_hip else 0
+                    
+                    if wrist_to_hip and wrist_to_hip < 80:
+                        # Cek juga tidak ada gerakan horizontal yang signifikan
+                        if horizontal_dist < 50:
+                            details['is_relax_position'] = True
+                            details['is_natural'] = True
+                            return True, details
+                    
+                    # CHECK 5: Vertical alignment (tangan lurus kebawah secara geometris)
+                    elbow_wrist_horizontal = abs(wrist[0] - elbow[0])
+                    elbow_wrist_vertical = abs(wrist[1] - elbow[1])
+                    
+                    if elbow_wrist_vertical > 0:
+                        vertical_ratio = elbow_wrist_horizontal / elbow_wrist_vertical
+                        details['vertical_alignment'] = vertical_ratio
+                        
+                        # Jika ratio < 0.25 = sangat vertikal (hampir lurus kebawah)
+                        if vertical_ratio < 0.25:
+                            # TAMBAHAN: Pastikan juga tidak terlalu jauh dari badan
+                            if horizontal_dist < 60:
+                                details['is_natural'] = True
+                                return True, details
+                    
+                    # CHECK 6: Wrist dekat dengan knee (posisi standing relax)
+                    if knee:
+                        wrist_to_knee = self.distance(wrist, knee)
+                        # Jika wrist dekat knee DAN horizontal_dist kecil = standing relax
+                        if wrist_to_knee and wrist_to_knee < 100 and horizontal_dist < 50:
+                            details['is_natural'] = True
+                            return True, details
+                    
+                    # Jika semua check gagal = BUKAN natural position
+                    return False, details
+                
+                # Panggil helper function
+                is_natural_position, natural_check_details = is_hand_in_natural_position(
+                    shoulder, elbow, wrist, hip, knee
+                )
+            
+            # ✅ STEP 4: JIKA POSISI NATURAL → RESET counter & SKIP deteksi
+            if is_natural_position:
+                # Decay suspicious frame count dengan cepat
+                track['suspicious_frame_count'] = max(0, track['suspicious_frame_count'] - 2)
+                track['last_normal_frame'] = current_frame
+                
+                # Reset zone penetration counters (jika ada)
+                for zone_name in track['wrist_in_zone_frames'].keys():
+                    if track['wrist_in_zone_frames'][zone_name] > 0:
+                        track['wrist_in_zone_frames'][zone_name] = max(
+                            0, 
+                            track['wrist_in_zone_frames'][zone_name] - 1
+                        )
+                
+                # DEBUG output
+                if self.debug_mode:
+                    print(f"✅ Track {track_id}: Hand in NATURAL position - No suspicious detection")
+                    print(f"   Details:")
+                    print(f"     - Wrist below hip: {natural_check_details['wrist_below_hip']}")
+                    print(f"     - Horizontal distance: {natural_check_details['horizontal_distance']:.0f}px")
+                    print(f"     - Elbow angle: {natural_check_details['elbow_angle']:.0f}°")
+                    print(f"     - Wrist to hip: {natural_check_details['wrist_to_hip_distance']:.0f}px")
+                    print(f"     - Straight arm: {natural_check_details['is_straight_arm']}")
+                    print(f"     - Relax position: {natural_check_details['is_relax_position']}")
+                
+                # Timeout check - Jika terlalu lama di posisi natural, kembali ke IDLE
+                frames_since_grab = current_frame - track['grab_frame']
+                if frames_since_grab >= self.SUSPICIOUS_VALIDATION['timeout_normal_behavior']:
+                    track['phase'] = DetectionPhase.IDLE
+                    self.reset_track(track_id)
+                    
+                    if self.debug_mode:
+                        print(f"⚪ Track {track_id}: GRABBING -> IDLE (Natural position timeout)")
+                
+                # RETURN FALSE - tidak ada alert, tidak ada suspicious
+                return False, [], []
+            
+            # ✅ STEP 5: Lanjutkan deteksi HANYA jika TIDAK natural position
+            zone_penetration, zone_details, zone_conf, zone_poses = self.detect_zone_penetration(
+                track_id, keypoints
+            )
+            
+            suspicious_poses = self.detect_suspicious_poses(
+                keypoints, 
+                grabbed_hand=grabbed_hand, 
+                is_rotating=False
+            )
             
             # Update buffer 
             track['suspicious_buffer'].append({
@@ -1574,7 +1778,7 @@ class ShopliftingPoseDetectorWithGrab:
                                     for p in suspicious_poses) or zone_penetration
             })
             
-            # Flag untuk tracking zone penetration
+            # ✅ STEP 6: ZONE PENETRATION - VERY DEEP INSTANT ALERT
             transition_to_suspicious = False
             transition_reason = ""
             
@@ -1592,9 +1796,11 @@ class ShopliftingPoseDetectorWithGrab:
                     track['zone_penetration_frames'] = current_frame
                     track['zone_penetration_zones'] = [z['zone'] for z in very_deep_zones]
                     
+                    # Update pose counts
                     for zone_pose in zone_poses:
                         track['pose_counts'][zone_pose[0]] += 10
                     
+                    # Generate alert reasons
                     alert_reasons = []
                     for z in very_deep_zones:
                         zone_name = z['zone'].replace('_', ' ').upper()
@@ -1607,7 +1813,7 @@ class ShopliftingPoseDetectorWithGrab:
                     
                     return True, suspicious_poses + zone_poses, alert_reasons
             
-            # CEK 1: IMMEDIATE HIGH SEVERITY ZONE 
+            # ✅ STEP 7: CEK IMMEDIATE HIGH SEVERITY ZONE 
             if zone_penetration:
                 high_severity_zones = [z for z in zone_details 
                                     if z['depth'] >= self.ZONE_THRESHOLDS['immediate_suspicious_depth']
@@ -1628,6 +1834,7 @@ class ShopliftingPoseDetectorWithGrab:
                     track['zone_penetration_zones'] = [z['zone'] for z in high_severity_zones]
                 
                 else:
+                    # Accumulated zone detection
                     if 'zone_consecutive_frames' not in track:
                         track['zone_consecutive_frames'] = 0
                     
@@ -1646,7 +1853,7 @@ class ShopliftingPoseDetectorWithGrab:
             else:
                 track['zone_consecutive_frames'] = 0
             
-            # CEK 2: HIGH SEVERITY POSE (tapi bukan saat rotating)
+            # ✅ STEP 8: CEK HIGH SEVERITY POSE (bukan saat rotating)
             if not transition_to_suspicious and suspicious_poses:
                 
                 # FILTER 1: HEAD POSES (threshold lebih rendah, lebih sensitif)
@@ -1667,7 +1874,7 @@ class ShopliftingPoseDetectorWithGrab:
                     print(f"     - Non-head severity: {len(non_head_severity)} (threshold: {self.SUSPICIOUS_VALIDATION['suspicious_confidence_threshold']:.2f})")
                     print(f"     - Suspicious frame count: {track['suspicious_frame_count']}")
                 
-                # TRIGGER LOGIC: HEAD POSES (lebih cepat, butuh 2 frame saja)
+                # TRIGGER LOGIC: HEAD POSES 
                 if head_poses:
                     track['suspicious_frame_count'] += 1
                     
@@ -1679,7 +1886,7 @@ class ShopliftingPoseDetectorWithGrab:
                         if self.debug_mode:
                             print(f"  🎩 HEAD POSE BONUS: +20 → score={track['suspicion_score']:.0f}")
                 
-                # TRIGGER LOGIC: NON-HEAD POSES (lebih lambat, butuh 3 frame)
+                # TRIGGER LOGIC: NON-HEAD POSES 
                 elif non_head_severity:
                     track['suspicious_frame_count'] += 1
                     
@@ -1697,7 +1904,7 @@ class ShopliftingPoseDetectorWithGrab:
                     track['suspicious_frame_count'] = max(0, track['suspicious_frame_count'] - 1)
                     track['last_normal_frame'] = current_frame
             
-            # CEK 3: CONSISTENT SUSPICIOUS BEHAVIOR
+            # ✅ STEP 9: CEK CONSISTENT SUSPICIOUS BEHAVIOR
             if not transition_to_suspicious and len(track['suspicious_buffer']) >= self.SUSPICIOUS_VALIDATION['pose_consistency_window']:
                 recent_suspicious = [b for b in track['suspicious_buffer'] if b['has_suspicious']]
                 suspicious_ratio = len(recent_suspicious) / len(track['suspicious_buffer'])
@@ -1714,7 +1921,7 @@ class ShopliftingPoseDetectorWithGrab:
                         transition_to_suspicious = True
                         transition_reason = f"CONSISTENT: ratio={suspicious_ratio:.1%}, poses={unique_poses}"
             
-            # TRANSISI KE SUSPICIOUS (jika memenuhi syarat)
+            # ✅ STEP 10: TRANSISI KE SUSPICIOUS 
             if transition_to_suspicious:
                 track['phase'] = DetectionPhase.SUSPICIOUS_MOVEMENT
                 track['phase_start_frame'] = current_frame
@@ -1726,7 +1933,7 @@ class ShopliftingPoseDetectorWithGrab:
                         for z in zone_details:
                             print(f"    - {z['zone']}: {z['hand']} (depth: {z['depth']:.1%}, frames: {z['frames_in_zone']})")
             
-            # TIMEOUT CHECK 
+            # ✅ STEP 11: TIMEOUT CHECK - Kembali ke IDLE jika normal behavior
             frames_since_grab = current_frame - track['grab_frame']
             
             if frames_since_grab >= self.SUSPICIOUS_VALIDATION['timeout_normal_behavior']:
@@ -2350,7 +2557,7 @@ class ShopliftingPoseDetectorWithGrab:
             return frame, y_offset_poses
     
     def process_frame(self, frame):
-        """Process frame dengan zone visualization - SIMPAN PROCESSED FRAMES"""
+        """Process frame dengan zone visualization + natural position indicator"""
         self.frame_count += 1
         
         results = self.pose_model.track(
@@ -2383,6 +2590,7 @@ class ShopliftingPoseDetectorWithGrab:
                     track_id, keypoints, self.frame_count
                 )
 
+                # OVERLAY untuk high confidence suspicious poses (belum alert)
                 if suspicious_poses and not is_alert:
                     high_conf_poses = [p for p in suspicious_poses if p[1] >= 0.75]
                     if high_conf_poses:
@@ -2390,13 +2598,13 @@ class ShopliftingPoseDetectorWithGrab:
                         cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), -1)
                         cv2.addWeighted(overlay, 0.15, processed, 0.85, 0, processed)
                 
-                # Draw keypoints
+                # DRAW KEYPOINTS
                 for kp in keypoints:
                     if kp[2] > 0.6:
                         x, y = int(kp[0]), int(kp[1])
                         cv2.circle(processed, (x, y), 4, (0, 255, 0), -1)
                 
-                # Draw skeleton
+                # DRAW SKELETON
                 connections = [
                     (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
                     (5, 11), (6, 12), (11, 12),
@@ -2408,7 +2616,83 @@ class ShopliftingPoseDetectorWithGrab:
                         end = (int(keypoints[end_idx][0]), int(keypoints[end_idx][1]))
                         cv2.line(processed, start, end, (0, 255, 0), 2)
                 
-                # DRAW POCKET ZONES 
+                # ✅ VISUALISASI NATURAL POSITION CHECK
+                if track['grab_detected'] and track['grabbed_hand']:
+                    grabbed_hand = track['grabbed_hand']
+                    shoulder_key = f'{grabbed_hand}_shoulder'
+                    elbow_key = f'{grabbed_hand}_elbow'
+                    wrist_key = f'{grabbed_hand}_wrist'
+                    hip_key = f'{grabbed_hand}_hip'
+                    knee_key = f'{grabbed_hand}_knee'
+                    
+                    shoulder = self.get_keypoint(keypoints, shoulder_key)
+                    elbow = self.get_keypoint(keypoints, elbow_key)
+                    wrist = self.get_keypoint(keypoints, wrist_key)
+                    hip = self.get_keypoint(keypoints, hip_key)
+                    knee = self.get_keypoint(keypoints, knee_key)
+                    
+                    if all([shoulder, elbow, wrist, hip]):
+                        # Check natural position (sama seperti logic di update_phase)
+                        if wrist[1] > hip[1]:  # Wrist di bawah hip
+                            horizontal_dist = abs(wrist[0] - hip[0])
+                            
+                            if horizontal_dist < 70:  # Di samping badan
+                                elbow_angle = self.calculate_angle(shoulder, elbow, wrist)
+                                wrist_to_hip = self.distance(wrist, hip)
+                                
+                                is_straight = elbow_angle and elbow_angle >= 160
+                                is_relax = wrist_to_hip and wrist_to_hip < 80 and horizontal_dist < 50
+                                
+                                # VISUAL INDICATOR: GREEN = NATURAL POSITION (SAFE)
+                                if is_straight or is_relax:
+                                    # Draw GREEN circle di wrist (INDICATOR UTAMA)
+                                    cv2.circle(processed, (int(wrist[0]), int(wrist[1])), 15, (0, 255, 0), 3)
+                                    
+                                    # Label "NATURAL"
+                                    cv2.putText(processed, "NATURAL", 
+                                            (int(wrist[0]) - 35, int(wrist[1]) - 25),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                                    
+                                    # Draw line dari shoulder → elbow → wrist (GREEN)
+                                    cv2.line(processed, 
+                                        (int(shoulder[0]), int(shoulder[1])), 
+                                        (int(elbow[0]), int(elbow[1])), 
+                                        (0, 255, 0), 3)
+                                    cv2.line(processed, 
+                                        (int(elbow[0]), int(elbow[1])), 
+                                        (int(wrist[0]), int(wrist[1])), 
+                                        (0, 255, 0), 3)
+                                    
+                                    # BONUS: Tampilkan nilai elbow angle
+                                    if elbow_angle:
+                                        angle_text = f"{elbow_angle:.0f}deg"
+                                        cv2.putText(processed, angle_text,
+                                                (int(elbow[0]) + 10, int(elbow[1]) - 10),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+                                    
+                                    # BONUS: Tampilkan distance ke hip
+                                    if wrist_to_hip:
+                                        dist_text = f"{wrist_to_hip:.0f}px"
+                                        cv2.putText(processed, dist_text,
+                                                (int(wrist[0]) + 10, int(wrist[1]) + 35),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+                                
+                                # VISUAL INDICATOR: YELLOW = BORDERLINE
+                                else:
+                                    # Jika horizontal_dist agak besar atau elbow angle borderline
+                                    if 50 < horizontal_dist < 70 or (elbow_angle and 150 < elbow_angle < 160):
+                                        cv2.circle(processed, (int(wrist[0]), int(wrist[1])), 12, (0, 255, 255), 2)
+                                        cv2.putText(processed, "BORDERLINE", 
+                                                (int(wrist[0]) - 45, int(wrist[1]) - 20),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                                        
+                                        # Info debug
+                                        if elbow_angle:
+                                            cv2.putText(processed, f"{elbow_angle:.0f}deg",
+                                                    (int(elbow[0]) + 10, int(elbow[1]) - 10),
+                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                
+                # DRAW POCKET ZONES
                 if track['grab_detected'] and track['pocket_zones']:
                     self.update_pocket_zones(track_id, keypoints)
                     
@@ -2422,19 +2706,19 @@ class ShopliftingPoseDetectorWithGrab:
                                 depth = track['max_zone_depth'].get(zone_name, 0)
                                 
                                 if depth >= 0.5:
-                                    color = (0, 0, 255) 
+                                    color = (0, 0, 255)  # RED
                                     thickness = 4
                                     alpha = 0.5
                                 elif depth >= 0.3:
-                                    color = (0, 100, 255) 
+                                    color = (0, 100, 255)  # ORANGE
                                     thickness = 3
                                     alpha = 0.4
                                 else:
-                                    color = (0, 165, 255)  
+                                    color = (0, 165, 255)  # YELLOW
                                     thickness = 3
                                     alpha = 0.3
                             else:
-                                color = (255, 200, 0)  
+                                color = (255, 200, 0)  # CYAN (empty zone)
                                 thickness = 2
                                 alpha = 0.15
                             
@@ -2460,17 +2744,18 @@ class ShopliftingPoseDetectorWithGrab:
                             
                             cv2.putText(processed, label, (x1z + 2, y1z - 5),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-
-                    if track['is_rotating'] and track['rotation_frames'] > 3:
-                            # Draw overlay transparan
-                            overlay = processed.copy()
-                            cv2.rectangle(overlay, (x1, y1), (x2, y2), (255, 165, 0), -1)
-                            cv2.addWeighted(overlay, 0.2, processed, 0.8, 0, processed)
-                            
-                            # Text ROTATING
-                            rotation_text = f"🔄 ROTATING - DETECTION PAUSED"
-                            cv2.putText(processed, rotation_text, (x1, y2 + 60),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 2)
+                
+                # ✅ VISUALISASI BODY ROTATION
+                if track['is_rotating'] and track['rotation_frames'] > 3:
+                    # Draw overlay transparan ORANGE
+                    overlay = processed.copy()
+                    cv2.rectangle(overlay, (x1, y1), (x2, y2), (255, 165, 0), -1)
+                    cv2.addWeighted(overlay, 0.2, processed, 0.8, 0, processed)
+                    
+                    # Text ROTATING
+                    rotation_text = f"ROTATING - DETECTION PAUSED"
+                    cv2.putText(processed, rotation_text, (x1, y2 + 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 2)
                 
                 # ALERT TRIGGERED
                 if is_alert and not track['alert_triggered']:
@@ -2506,43 +2791,47 @@ class ShopliftingPoseDetectorWithGrab:
                         if clip_name:
                             print(f"   Clip: {clip_name}")
                     
+                    # Draw RED bounding box untuk alert
                     cv2.rectangle(processed, (x1, y1), (x2, y2), (0, 0, 255), 5)
                     label = f"SHOPLIFTING! ID:{track_id}"
                     cv2.putText(processed, label, (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 3)
                     
+                    # Draw alert reasons
                     y_offset = y2 + 25
                     for reason in reasons[:2]:
                         cv2.putText(processed, reason, (x1, y_offset),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                         y_offset += 20
                 
+                # NON-ALERT: Draw phase status
                 else:
                     phase = track['phase']
                     score = track['suspicion_score']
                     
+                    # Tentukan warna dan label berdasarkan fase
                     if phase == DetectionPhase.IDLE:
-                        color = (0, 255, 0)
+                        color = (0, 255, 0)  # GREEN
                         label = f"ID:{track_id} [IDLE]"
                         thickness = 2
                     elif phase == DetectionPhase.REACHING_SHELF:
-                        color = (0, 255, 255)
+                        color = (0, 255, 255)  # YELLOW
                         label = f"ID:{track_id} [REACHING {track['grabbed_hand']}]"
                         thickness = 3
                     elif phase == DetectionPhase.GRABBING:
-                        color = (0, 165, 255)
+                        color = (0, 165, 255)  # ORANGE
                         label = f"ID:{track_id} [GRABBED!]"
                         thickness = 3
                     elif phase == DetectionPhase.SUSPICIOUS_MOVEMENT:
-                        color = (0, 0, 255)
+                        color = (0, 0, 255)  # RED
                         label = f"ID:{track_id} [SUSPICIOUS {score:.0f}]"
                         thickness = 4
                     elif phase == DetectionPhase.ALERT:
-                        color = (0, 0, 255)
+                        color = (0, 0, 255)  # RED
                         label = f"ID:{track_id} [ALERTED]"
                         thickness = 4
                     else:
-                        color = (0, 255, 0)
+                        color = (0, 255, 0)  # GREEN
                         label = f"ID:{track_id}"
                         thickness = 2
                     
@@ -2551,19 +2840,20 @@ class ShopliftingPoseDetectorWithGrab:
                     cv2.putText(processed, label, (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                     
+                    # Draw suspicious poses overlay (jika ada)
                     if phase in [DetectionPhase.SUSPICIOUS_MOVEMENT, DetectionPhase.GRABBING]:
                         if suspicious_poses and len(suspicious_poses) > 0:
                             processed, pose_y_offset = self.draw_suspicious_poses_overlay(
                                 processed, suspicious_poses, x1, y1, x2, y2
                             )
                     
-                    # Draw score info
+                    # Draw score info untuk SUSPICIOUS phase
                     if phase == DetectionPhase.SUSPICIOUS_MOVEMENT:
                         info_text = f"Score:{score:.0f} Ratio:{track['suspicious_ratio']:.1%}"
                         cv2.putText(processed, info_text, (x1, y2 + 20),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
                     
-                    # Draw grab info
+                    # Draw grab info (jika sudah grab)
                     if track['grab_detected'] and phase != DetectionPhase.IDLE:
                         frames_since_grab = self.frame_count - track['grab_frame']
                         reach_info = track.get('reach_type', 'unknown')
@@ -2571,17 +2861,20 @@ class ShopliftingPoseDetectorWithGrab:
                         cv2.putText(processed, grab_info, (x1, y2 + 40),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
         
-        # Alert banner
+        # GLOBAL ALERT BANNER (jika ada alert)
         if alert_persons:
             text = f"SHOPLIFTING DETECTED - {len(alert_persons)} PERSON(S)"
             text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3)[0]
             text_x = (processed.shape[1] - text_size[0]) // 2
             
+            # Background RED
             cv2.rectangle(processed, (text_x - 20, 10), 
                         (text_x + text_size[0] + 20, 60), (0, 0, 255), -1)
+            # Text WHITE
             cv2.putText(processed, text, (text_x, 45),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
         
+        # SUSPICIOUS ACTIVITY STATS (sidebar kanan atas)
         active_suspicious = [(tid, t) for tid, t in self.person_tracks.items() 
                             if t['phase'] in [DetectionPhase.SUSPICIOUS_MOVEMENT, DetectionPhase.GRABBING]
                             and len(t['suspicious_poses']) > 0]
@@ -2590,29 +2883,32 @@ class ShopliftingPoseDetectorWithGrab:
             y_stat = 30
             x_stat = processed.shape[1] - 350
             
-            # Background
+            # Background hitam transparan
             cv2.rectangle(processed, (x_stat - 10, 10),
-                         (processed.shape[1] - 10, y_stat + len(active_suspicious) * 25 + 10),
-                         (0, 0, 0), -1)
+                        (processed.shape[1] - 10, y_stat + len(active_suspicious) * 25 + 10),
+                        (0, 0, 0), -1)
             
+            # Header
             cv2.putText(processed, "SUSPICIOUS ACTIVITY", (x_stat, y_stat),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             y_stat += 25
             
-            for track_id, track in active_suspicious[:3]:  # Top 3
+            # List top 3 suspicious persons
+            for track_id, track in active_suspicious[:3]:
                 pose_count = len(track['suspicious_poses'])
                 score = track['suspicion_score']
                 stat_text = f"ID{track_id}: {pose_count} poses (score: {score:.0f})"
                 cv2.putText(processed, stat_text, (x_stat, y_stat),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
                 y_stat += 20
         
-        # Show recording status
+        # RECORDING STATUS (kiri bawah)
         if self.recording_alerts:
             recording_text = f"RECORDING: {len(self.recording_alerts)} clip(s)"
             cv2.putText(processed, recording_text, (10, processed.shape[0] - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         
+        # SAVE TO BUFFER & UPDATE RECORDINGS
         self.frame_buffer.append(processed.copy())
         self.update_recording_alerts(processed)
         
