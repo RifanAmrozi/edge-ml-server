@@ -1570,26 +1570,10 @@ class ShopliftingPoseDetectorWithGrab:
                 self.initialize_pocket_zones(track_id, keypoints)
             
             # ✅ STEP 1: Deteksi rotasi DULU sebelum apapun
-            is_rotating, rotation_deg, rotation_conf = self.detect_body_rotation(keypoints, track_id)
+            is_rotating = False 
+            rotation_conf = 0.0
             
-            # ✅ STEP 2: Jika sedang rotate, FREEZE semua deteksi
-            if is_rotating and track['is_rotating']:
-                track['last_normal_frame'] = current_frame
-                track['suspicious_frame_count'] = 0  
-                
-                if self.debug_mode:
-                    print(f"🔄 Track {track_id}: ROTATING - All detection PAUSED (rotation_frames: {track['rotation_frames']})")
-                
-                # Timeout check
-                frames_since_grab = current_frame - track['grab_frame']
-                if frames_since_grab >= self.SUSPICIOUS_VALIDATION['timeout_normal_behavior'] * 1.5:
-                    track['phase'] = DetectionPhase.IDLE
-                    self.reset_track(track_id)
-                    
-                    if self.debug_mode:
-                        print(f"⚪ Track {track_id}: GRABBING -> IDLE (Rotation timeout)")
-                
-                return False, [], []  
+  
             
             # ✅ STEP 3: CEK POSISI NATURAL (TANGAN LURUS KEBAWAH)
             grabbed_hand = track['grabbed_hand']
