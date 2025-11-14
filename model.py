@@ -517,25 +517,25 @@ class ShopliftingPoseDetectorWithGrab:
             'pants_pocket_left': PocketZone(
                 'pants_pocket_left',
                 left_hip, left_hip,
-                width_factor=0.4,      
+                width_factor=0.1,      
                 depth_factor=0.35
             ),
             'pants_pocket_right': PocketZone(
                 'pants_pocket_right',
                 right_hip, right_hip,
-                width_factor=0.4,      
+                width_factor=0.1,      
                 depth_factor=0.35
             ),
             'jacket_pocket_left': PocketZone(
                 'jacket_pocket_left',
                 left_shoulder, left_hip,
-                width_factor=0.35,    
+                width_factor=0.1,    
                 depth_factor=0.3
             ),
             'jacket_pocket_right': PocketZone(
                 'jacket_pocket_right',
                 right_shoulder, right_hip,
-                width_factor=0.35,     
+                width_factor=0.1,     
                 depth_factor=0.3
             )
         }
@@ -1328,12 +1328,12 @@ class ShopliftingPoseDetectorWithGrab:
                 
                 if wrist_to_hip and wrist_to_hip < threshold:
                     horizontal_offset = abs(left_wrist[0] - left_hip[0])
-                    min_offset = 50 if is_rotating else 35
+                    min_offset = 80 if is_rotating else 60
                     
                     if horizontal_offset > min_offset and not is_normal:
                         if grabbed_hand == 'left' or grabbed_hand is None:
                             confidence = 0.80 * rotation_penalty
-                            if not is_rotating or confidence > 0.55:
+                            if not is_rotating or confidence > 1.4:
                                 suspicious_poses.append((
                                     SuspiciousPose.CONCEALING_AT_WAIST,
                                     confidence,
@@ -1350,12 +1350,12 @@ class ShopliftingPoseDetectorWithGrab:
                 
                 if wrist_to_hip and wrist_to_hip < threshold:
                     horizontal_offset = abs(right_wrist[0] - right_hip[0])
-                    min_offset = 50 if is_rotating else 35
+                    min_offset = 80 if is_rotating else 60
                     
                     if horizontal_offset > min_offset and not is_normal:
                         if grabbed_hand == 'right' or grabbed_hand is None:
                             confidence = 0.80 * rotation_penalty
-                            if not is_rotating or confidence > 0.55:
+                            if not is_rotating or confidence > 1.4:
                                 suspicious_poses.append((
                                     SuspiciousPose.CONCEALING_AT_WAIST,
                                     confidence,
@@ -2067,14 +2067,14 @@ class ShopliftingPoseDetectorWithGrab:
                     if p[0] in [SuspiciousPose.HIDING_IN_HAT, SuspiciousPose.HAND_ON_HEAD]
                     and p[1] >= 0.65]
 
-        if head_poses and track['consecutive_suspicious'] >= 2:  
+        if head_poses and track['consecutive_suspicious'] >= 3:  
             reasons = [f"GRAB+{p[2]}" for p in head_poses[:2]]
             return True, reasons
 
         # HIGH CONFIDENCE 
         high_conf_poses = [p for p in suspicious_poses 
                         if p[1] >= self.SUSPICIOUS_THRESHOLDS['high_confidence_threshold']]
-        if high_conf_poses and track['consecutive_suspicious'] >= 3:  
+        if high_conf_poses and track['consecutive_suspicious'] >= 5:  
             reasons = [f"GRAB+{p[2]}" for p in high_conf_poses[:2]]
             return True, reasons
 
@@ -2086,14 +2086,14 @@ class ShopliftingPoseDetectorWithGrab:
                                                 SuspiciousPose.ZONE_JACKET_POCKET_LEFT,
                                                 SuspiciousPose.ZONE_JACKET_POCKET_RIGHT])
             
-            if zone_pose_counts >= 4:  
+            if zone_pose_counts >= 6:  
                 for zone_name in track['zone_penetration_zones']:
                     reasons.append(f"GRAB + {zone_name.replace('_', ' ').upper()}")
                 return True, reasons
         
         # SUSPICION SCORE 
-        if (track['suspicion_score'] >= 60 and  
-            track['suspicious_ratio'] >= 0.25): 
+        if (track['suspicion_score'] >= 80 and  
+            track['suspicious_ratio'] >= 0.80): 
             
             top_poses = sorted(track['pose_counts'].items(), 
                             key=lambda x: x[1], reverse=True)[:2]
